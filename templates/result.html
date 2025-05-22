@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Результат распознавания</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f9f9f9;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .result-container {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+        .back-btn {
+            background-color: #2196F3;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 20px;
+        }
+        .back-btn:hover {
+            background-color: #0b7dda;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Результат распознавания</h1>
+
+        <div class="result-container">
+            <h2>Извлеченная информация:</h2>
+            <pre id="json-result">{{ result }}</pre>
+        </div>
+
+        <a href="/" class="back-btn">Вернуться на главную</a>
+    </div>
+
+    <script>
+        // Попытка форматирования JSON для лучшей читаемости
+        document.addEventListener('DOMContentLoaded', function() {
+            const resultElement = document.getElementById('json-result');
+            try {
+                const jsonData = JSON.parse(resultElement.textContent);
+                resultElement.textContent = JSON.stringify(jsonData, null, 2);
+            } catch (e) {
+                // Если не удалось распарсить как JSON, оставляем как есть
+                console.log('Не удалось распарсить результат как JSON');
+            }
+        });
+    </script>
+</body>
+</html>
