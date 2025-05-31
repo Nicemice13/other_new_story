@@ -5,7 +5,8 @@
  ```
 
 
-# Активация виртуального окружения source venv/Scripts/activate
+# Активация виртуального окружения
+зшsource venv/Scripts/activate
 
 
 # Шаблон mvt и mvc для оформления приложений
