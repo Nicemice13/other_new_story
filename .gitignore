@@ -42,3 +42,8 @@ wheels/
 .DS_Store
 Thumbs.db
 EOF
+
+
+test.py
+test_api.py
+simple_test.py
