@@ -6,7 +6,13 @@
 
 
 # Активация виртуального окружения
-зшsource venv/Scripts/activate
+source venv/Scripts/activate
+
+#  Запуск PostgreSQL с помощью docker-compose.yml
+sudo docker compose up -d
+
+# Остановкк PostgreSQL с помощью docker-compose.yml
+sudo docker compose down
 
 
 # Шаблон mvt и mvc для оформления приложений
