@@ -6,7 +6,7 @@
 
 
 # Активация виртуального окружения
-source venv/Scripts/activate
+source venv/bin/activate
 
 #  Запуск PostgreSQL с помощью docker-compose.yml
 sudo docker compose up -d

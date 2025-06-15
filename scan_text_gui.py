@@ -12,6 +12,8 @@ import tempfile  # Добавляем импорт tempfile
 from dotenv import load_dotenv, find_dotenv
 import fitz  # PyMuPDF для работы с PDF
 from langchain_gigachat import GigaChat
+import ssl
+
 
 # Загрузка переменных окружения
 load_dotenv(find_dotenv())
@@ -27,24 +29,56 @@ def recognize_text_from_file(file_path):
     model = GigaChat(
         model="GigaChat-2-Max",
         verify_ssl_certs=False,
-        auto_upload_images=True  # Добавляем этот параметр
+        auto_upload_images=True,
+        timeout=120  # Увеличиваем таймаут до 120 секунд
     )
 
+    # Проверяем размер файла
+    file_size = os.path.getsize(file_path) / (1024 * 1024)  # в МБ
+    if file_size > 4:  # Ограничение 4 МБ для всех файлов
+        print(f"Файл слишком большой: {file_size:.2f} МБ")
+
+        # Для изображений - уменьшаем размер
+        if not file_path.lower().endswith('.pdf'):
+            try:
+                # Уменьшаем размер изображения
+                img = Image.open(file_path)
+
+                # Сжимаем изображение
+                temp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                img.save(temp_img.name, format="JPEG", quality=50)  # Сильное сжатие
+                temp_img.close()
+
+                file_path = temp_img.name
+                print(f"Изображение сжато и сохранено: {file_path}")
+            except Exception as e:
+                print(f"Ошибка при сжатии изображения: {str(e)}")
+                return f"Ошибка: Файл слишком большой ({file_size:.2f} МБ). Максимальный размер: 4 МБ."
+        else:
+            return f"Ошибка: PDF файл слишком большой ({file_size:.2f} МБ). Максимальный размер: 4 МБ."
 
     # Проверяем, является ли файл PDF
     if file_path.lower().endswith('.pdf'):
         try:
-            # Конвертируем первую страницу PDF в изображение с меньшим разрешением
+            # Конвертируем первую страницу PDF в изображение с низким разрешением
             pdf_document = fitz.open(file_path)
             if len(pdf_document) > 0:
                 # Берем первую страницу
                 page = pdf_document[0]
-                # Рендерим страницу как изображение с умеренным разрешением
-                pix = page.get_pixmap(matrix=fitz.Matrix(1.0, 1.0))  # Уменьшаем разрешение
+
+                # Получаем размеры страницы
+                width, height = page.rect.width, page.rect.height
+
+                # Вычисляем масштаб для уменьшения до безопасного размера
+                # Ограничиваем до 1000 пикселей по ширине
+                scale = min(0.2, 1000 / width)
+
+                # Рендерим страницу как изображение с очень низким разрешением
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
 
                 # Сохраняем изображение во временный файл
-                temp_img = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-                pix.save(temp_img.name)
+                temp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                pix.save(temp_img.name)  # Без дополнительных параметров
                 temp_img.close()
 
                 # Используем временное изображение вместо PDF
@@ -52,9 +86,179 @@ def recognize_text_from_file(file_path):
                 print(f"PDF преобразован в изображение: {file_path}")
 
             pdf_document.close()
+        except MemoryError:
+            print("Ошибка: Недостаточно памяти для обработки PDF")
+            return "Ошибка: Недостаточно памяти для обработки PDF. Попробуйте файл меньшего размера."
         except Exception as e:
             print(f"Ошибка при конвертации PDF в изображение: {str(e)}")
-            # Если не удалось конвертировать, продолжаем с обработкой как есть
+            return f"Ошибка при обработке PDF: {str(e)}"
+
+    # Обработка изображения
+    with open(file_path, "rb") as file:
+        file_content = file.read()
+
+    # Проверяем размер после обработки
+    if len(file_content) > 4 * 1024 * 1024:  # 4 МБ в байтах
+        return "Ошибка: Файл слишком большой даже после сжатия. Используйте изображение меньшего размера."
+
+    # Кодируем файл в base64
+    file_base64 = base64.b64encode(file_content).decode('utf-8')
+
+    # Определяем тип файла для промпта
+    file_type = "изображения"  # Всегда используем "изображения", так как PDF уже конвертирован
+
+    # Формируем сообщение с изображением
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f'''
+Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
+{{
+  "name": "",
+  "phones": [],
+  "email": "",
+  "address": "",
+  "description": ""
+}}
+'''
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{file_base64}"
+                    }
+                }
+            ]
+        }
+    ]
+
+    # Отправляем запрос с обработкой ошибок
+    try:
+        response = model.invoke(messages)
+        return response.content
+    except TimeoutError:
+        return "Ошибка: Превышено время ожидания ответа от сервера. Попробуйте позже."
+    except ssl.SSLError as e:
+        if "handshake operation timed out" in str(e):
+            return "Ошибка: Превышено время ожидания SSL-соединения. Проверьте подключение к интернету."
+        return f"Ошибка SSL: {str(e)}"
+    except Exception as e:
+        return f"Ошибка при обработке запроса: {str(e)}"
+
+
+
+    # Обработка изображения
+    with open(file_path, "rb") as file:
+        file_content = file.read()
+
+    # Проверяем размер после обработки
+    if len(file_content) > 4 * 1024 * 1024:  # 4 МБ в байтах
+        return "Ошибка: Файл слишком большой даже после сжатия. Используйте изображение меньшего размера."
+
+    # Кодируем файл в base64
+    file_base64 = base64.b64encode(file_content).decode('utf-8')
+
+    # Определяем тип файла для промпта
+    file_type = "изображения"  # Всегда используем "изображения", так как PDF уже конвертирован
+
+    # Формируем сообщение с изображением
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f'''
+Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
+{{
+  "name": "",
+  "phones": [],
+  "email": "",
+  "address": "",
+  "description": ""
+}}
+'''
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{file_base64}"
+                    }
+                }
+            ]
+        }
+    ]
+
+    # Отправляем запрос с обработкой ошибок
+    try:
+        response = model.invoke(messages)
+        return response.content
+    except TimeoutError:
+        return "Ошибка: Превышено время ожидания ответа от сервера. Попробуйте позже."
+    except ssl.SSLError as e:
+        if "handshake operation timed out" in str(e):
+            return "Ошибка: Превышено время ожидания SSL-соединения. Проверьте подключение к интернету."
+        return f"Ошибка SSL: {str(e)}"
+    except Exception as e:
+        return f"Ошибка при обработке запроса: {str(e)}"
+
+    # Обработка изображения или PDF как изображения
+    with open(file_path, "rb") as file:
+        file_content = file.read()
+
+    # Кодируем файл в base64
+    file_base64 = base64.b64encode(file_content).decode('utf-8')
+
+    # Определяем тип файла для промпта
+    file_type = "PDF-файла" if file_path.lower().endswith('.pdf') else "изображения"
+
+    # Определяем MIME-тип
+    mime_type = "application/pdf" if file_path.lower().endswith('.pdf') else "image/jpeg"
+
+    # Формируем сообщение с изображением
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f'''
+Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
+{{
+  "name": "",
+  "phones": [],
+  "email": "",
+  "address": "",
+  "description": ""
+}}
+'''
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{file_base64}"
+                    }
+                }
+            ]
+        }
+    ]
+
+    # Отправляем запрос с обработкой ошибок
+    try:
+        response = model.invoke(messages)
+        return response.content
+    except TimeoutError:
+        return "Ошибка: Превышено время ожидания ответа от сервера. Попробуйте позже."
+    except ssl.SSLError as e:
+        if "handshake operation timed out" in str(e):
+            return "Ошибка: Превышено время ожидания SSL-соединения. Проверьте подключение к интернету."
+        return f"Ошибка SSL: {str(e)}"
+    except Exception as e:
+        return f"Ошибка при обработке запроса: {str(e)}"
+
 
 
     # Обработка изображения или PDF как изображения
