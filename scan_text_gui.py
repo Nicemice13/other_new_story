@@ -13,6 +13,8 @@ from dotenv import load_dotenv, find_dotenv
 import fitz  # PyMuPDF для работы с PDF
 from langchain_gigachat import GigaChat
 import ssl
+import shutil
+
 
 
 # Загрузка переменных окружения
@@ -551,6 +553,28 @@ class TextRecognizerApp:
             return
 
         try:
+            # Сохраняем изображение в папку images
+            image_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
+            if not os.path.exists(image_dir):
+                os.makedirs(image_dir)
+
+            # Формируем имя файла из названия компании и текущей даты/времени
+            import datetime
+            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            company_name = data.get("name", "").strip() if data.get("name") else "contact"
+            company_name = re.sub(r'[\\/*?:"<>|]', "_", company_name)  # Заменяем недопустимые символы
+
+            # Создаем имя файла с датой и временем для уникальности
+            image_filename = f"{company_name}_{now}.jpg"
+            image_path = os.path.join(image_dir, image_filename)
+
+            # Копируем изображение
+            shutil.copy2(self.image_path, image_path)
+
+            # Читаем изображение в бинарном формате для сохранения в БД
+            with open(self.image_path, 'rb') as img_file:
+                binary_data = img_file.read()
+
             # Подключение к БД
             conn = psycopg2.connect(
                 host=DB_HOST,
@@ -563,6 +587,15 @@ class TextRecognizerApp:
             # Создание курсора
             cur = conn.cursor()
 
+            # Проверяем, существуют ли нужные столбцы
+            try:
+                # Пытаемся добавить столбцы, если их нет
+                cur.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS image_path TEXT;")
+                cur.execute("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS image_data BYTEA;")
+                conn.commit()
+            except Exception as e:
+                print(f"Предупреждение при проверке столбцов: {str(e)}")
+
             # Подготовка данных
             name = data.get("name", "")
             phones = data.get("phones", [])
@@ -570,15 +603,15 @@ class TextRecognizerApp:
             address = data.get("address", "")
             description = data.get("description", "")
 
-            # SQL-запрос для вставки данных
+            # SQL-запрос для вставки данных с изображением
             insert_query = """
-            INSERT INTO contacts (name, phones, email, address, description)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO contacts (name, phones, email, address, description, image_path, image_data)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id;
             """
 
             # Выполнение запроса
-            cur.execute(insert_query, (name, phones, email, address, description))
+            cur.execute(insert_query, (name, phones, email, address, description, image_path, psycopg2.Binary(binary_data)))
 
             # Получение ID вставленной записи
             contact_id = cur.fetchone()[0]
@@ -598,6 +631,7 @@ class TextRecognizerApp:
         except Exception as e:
             self.status_var.set(f"Ошибка при сохранении в БД: {str(e)}")
             messagebox.showerror("Ошибка", f"Не удалось сохранить данные в БД: {str(e)}")
+
 
     def handle_error(self, error_message):
         """Обработка ошибок распознавания"""
