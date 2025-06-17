@@ -28,11 +28,12 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
 def recognize_text_from_file(file_path):
+    """Распознавание текста из файла изображения или PDF"""
     model = GigaChat(
         model="GigaChat-2-Max",
         verify_ssl_certs=False,
         auto_upload_images=True,
-        timeout=120  # Увеличиваем таймаут до 120 секунд
+        timeout=120
     )
 
     # Проверяем размер файла
@@ -45,12 +46,9 @@ def recognize_text_from_file(file_path):
             try:
                 # Уменьшаем размер изображения
                 img = Image.open(file_path)
-
-                # Сжимаем изображение
                 temp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
                 img.save(temp_img.name, format="JPEG", quality=50)  # Сильное сжатие
                 temp_img.close()
-
                 file_path = temp_img.name
                 print(f"Изображение сжато и сохранено: {file_path}")
             except Exception as e:
@@ -67,26 +65,17 @@ def recognize_text_from_file(file_path):
             if len(pdf_document) > 0:
                 # Берем первую страницу
                 page = pdf_document[0]
-
-                # Получаем размеры страницы
-                width, height = page.rect.width, page.rect.height
-
                 # Вычисляем масштаб для уменьшения до безопасного размера
-                # Ограничиваем до 1000 пикселей по ширине
-                scale = min(0.2, 1000 / width)
-
-                # Рендерим страницу как изображение с очень низким разрешением
+                scale = min(0.2, 1000 / page.rect.width)
+                # Рендерим страницу как изображение с низким разрешением
                 pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
-
                 # Сохраняем изображение во временный файл
                 temp_img = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-                pix.save(temp_img.name)  # Без дополнительных параметров
+                pix.save(temp_img.name)
                 temp_img.close()
-
                 # Используем временное изображение вместо PDF
                 file_path = temp_img.name
                 print(f"PDF преобразован в изображение: {file_path}")
-
             pdf_document.close()
         except MemoryError:
             print("Ошибка: Недостаточно памяти для обработки PDF")
@@ -105,66 +94,9 @@ def recognize_text_from_file(file_path):
 
     # Кодируем файл в base64
     file_base64 = base64.b64encode(file_content).decode('utf-8')
-
-    # Определяем тип файла для промпта
-    file_type = "изображения"  # Всегда используем "изображения", так как PDF уже конвертирован
-
-    # Формируем сообщение с изображением
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": f'''
-Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
-{{
-  "name": "",
-  "phones": [],
-  "email": "",
-  "address": "",
-  "description": ""
-}}
-'''
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{file_base64}"
-                    }
-                }
-            ]
-        }
-    ]
-
-    # Отправляем запрос с обработкой ошибок
-    try:
-        response = model.invoke(messages)
-        return response.content
-    except TimeoutError:
-        return "Ошибка: Превышено время ожидания ответа от сервера. Попробуйте позже."
-    except ssl.SSLError as e:
-        if "handshake operation timed out" in str(e):
-            return "Ошибка: Превышено время ожидания SSL-соединения. Проверьте подключение к интернету."
-        return f"Ошибка SSL: {str(e)}"
-    except Exception as e:
-        return f"Ошибка при обработке запроса: {str(e)}"
-
-
-
-    # Обработка изображения
-    with open(file_path, "rb") as file:
-        file_content = file.read()
-
-    # Проверяем размер после обработки
-    if len(file_content) > 4 * 1024 * 1024:  # 4 МБ в байтах
-        return "Ошибка: Файл слишком большой даже после сжатия. Используйте изображение меньшего размера."
-
-    # Кодируем файл в base64
-    file_base64 = base64.b64encode(file_content).decode('utf-8')
-
-    # Определяем тип файла для промпта
-    file_type = "изображения"  # Всегда используем "изображения", так как PDF уже конвертирован
+    
+    # Определяем MIME-тип (всегда image/jpeg, так как PDF уже конвертирован)
+    mime_type = "image/jpeg"
 
     # Формируем сообщение с изображением
     messages = [
@@ -173,69 +105,15 @@ def recognize_text_from_file(file_path):
             "content": [
                 {
                     "type": "text",
-                    "text": f'''
-Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
-{{
+                    "text": '''
+Распознай текст с этого изображения. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
+{
   "name": "",
   "phones": [],
   "email": "",
   "address": "",
   "description": ""
-}}
-'''
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{file_base64}"
-                    }
-                }
-            ]
-        }
-    ]
-
-    # Отправляем запрос с обработкой ошибок
-    try:
-        response = model.invoke(messages)
-        return response.content
-    except TimeoutError:
-        return "Ошибка: Превышено время ожидания ответа от сервера. Попробуйте позже."
-    except ssl.SSLError as e:
-        if "handshake operation timed out" in str(e):
-            return "Ошибка: Превышено время ожидания SSL-соединения. Проверьте подключение к интернету."
-        return f"Ошибка SSL: {str(e)}"
-    except Exception as e:
-        return f"Ошибка при обработке запроса: {str(e)}"
-
-    # Обработка изображения или PDF как изображения
-    with open(file_path, "rb") as file:
-        file_content = file.read()
-
-    # Кодируем файл в base64
-    file_base64 = base64.b64encode(file_content).decode('utf-8')
-
-    # Определяем тип файла для промпта
-    file_type = "PDF-файла" if file_path.lower().endswith('.pdf') else "изображения"
-
-    # Определяем MIME-тип
-    mime_type = "application/pdf" if file_path.lower().endswith('.pdf') else "image/jpeg"
-
-    # Формируем сообщение с изображением
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": f'''
-Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
-{{
-  "name": "",
-  "phones": [],
-  "email": "",
-  "address": "",
-  "description": ""
-}}
+}
 '''
                 },
                 {
@@ -260,60 +138,19 @@ def recognize_text_from_file(file_path):
         return f"Ошибка SSL: {str(e)}"
     except Exception as e:
         return f"Ошибка при обработке запроса: {str(e)}"
-
-
-
-    # Обработка изображения или PDF как изображения
-    with open(file_path, "rb") as file:
-        file_content = file.read()
-
-    # Кодируем файл в base64
-    file_base64 = base64.b64encode(file_content).decode('utf-8')
-
-    # Определяем тип файла для промпта
-    file_type = "PDF-файла" if file_path.lower().endswith('.pdf') else "изображения"
-
-    # Определяем MIME-тип
-    mime_type = "application/pdf" if file_path.lower().endswith('.pdf') else "image/jpeg"
-
-    # Формируем сообщение с изображением
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": f'''
-Распознай текст с этого {file_type}. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
-{{
-  "name": "",
-  "phones": [],
-  "email": "",
-  "address": "",
-  "description": ""
-}}
-'''
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{file_base64}"
-                    }
-                }
-            ]
-        }
-    ]
-
-    # Отправляем запрос
-    response = model.invoke(messages)
-
-    return response.content
 
 class TextRecognizerApp:
+    """Приложение для распознавания текста с изображений и визиток"""
     def __init__(self, root):
+        """Инициализация приложения"""
         self.root = root
         self.root.title("Распознавание текста с изображений")
         self.root.geometry("800x600")
+        
+        # Инициализация переменных для хранения данных
+        self.image_path = None
+        self.photo = None  # Для хранения ссылки на изображение
+        self.recognized_text = None
 
         # Создаем главное меню
         self.menu_bar = tk.Menu(root)
@@ -370,9 +207,7 @@ class TextRecognizerApp:
         self.text_output = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD)
         self.text_output.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Переменные для хранения пути к изображению и распознанного текста
-        self.image_path = None
-        self.photo = None  # Для хранения ссылки на изображение (чтобы не удалялось сборщиком мусора)
+        # Эти переменные уже инициализированы в __init__
 
         # Статусная строка
         self.status_var = tk.StringVar()
@@ -468,7 +303,11 @@ class TextRecognizerApp:
 
     def update_ui(self, text):
         """Обновление UI после распознавания"""
+        # Очищаем и вставляем новый текст
+        self.text_output.delete(1.0, tk.END)
         self.text_output.insert(tk.END, text)
+        
+        # Останавливаем индикатор прогресса и разблокируем кнопки
         self.progress.stop()
         self.select_button.config(state=tk.NORMAL)
         self.recognize_button.config(state=tk.NORMAL)
@@ -477,18 +316,21 @@ class TextRecognizerApp:
         # Сохраняем распознанный текст
         self.recognized_text = text
 
-        # Создаем фрейм для кнопок сохранения
+        # Удаляем старый фрейм с кнопками, если он существует
         if hasattr(self, 'save_frame'):
             self.save_frame.destroy()
 
+        # Создаем новый фрейм для кнопок сохранения
         self.save_frame = tk.Frame(self.root)
         self.save_frame.pack(pady=5)
 
         # Добавляем кнопки сохранения
-        save_json_button = tk.Button(self.save_frame, text="Сохранить в JSON", command=lambda: self.save_to_json(text))
+        save_json_button = tk.Button(self.save_frame, text="Сохранить в JSON", 
+                                    command=lambda: self.save_to_json(text))
         save_json_button.pack(side=tk.LEFT, padx=5)
 
-        save_db_button = tk.Button(self.save_frame, text="Сохранить в БД", command=lambda: self.save_to_db(text))
+        save_db_button = tk.Button(self.save_frame, text="Сохранить в БД", 
+                                  command=lambda: self.save_to_db(text))
         save_db_button.pack(side=tk.LEFT, padx=5)
 
     def extract_data(self, text):
@@ -516,6 +358,9 @@ class TextRecognizerApp:
                     "description": text  # Помещаем весь текст в описание
                 }
                 return data, "Предупреждение: JSON не найден в тексте"
+        except json.JSONDecodeError:
+            # Специфическая обработка ошибок JSON
+            return None, "Ошибка: некорректный формат JSON в тексте"
         except Exception as e:
             return None, f"Ошибка при извлечении данных: {str(e)}"
 
@@ -531,9 +376,17 @@ class TextRecognizerApp:
             # Формируем имя файла из названия компании
             company_name = data["name"].strip() if data["name"] else "contact_data"
             filename = re.sub(r'[\\/*?:"<>|]', "_", company_name)  # Заменяем недопустимые символы
+            
+            # Создаем директорию cards, если она не существует
+            cards_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cards")
+            if not os.path.exists(cards_dir):
+                os.makedirs(cards_dir)
+                
+            # Полный путь к файлу
+            file_path = os.path.join(cards_dir, f"{filename}.json")
 
             # Сохраняем в JSON файл
-            with open(f"{filename}.json", "w", encoding="utf-8") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
             self.status_var.set(f"Данные сохранены в файл: {filename}.json")
@@ -575,15 +428,30 @@ class TextRecognizerApp:
             with open(self.image_path, 'rb') as img_file:
                 binary_data = img_file.read()
 
-            # Подключение к БД
-            conn = psycopg2.connect(
-                host=DB_HOST,
-                port=DB_PORT,
-                database=DB_NAME,
-                user=DB_USER,
-                password=DB_PASSWORD
-            )
+            # Сохраняем данные в БД
+            contact_id = self._save_contact_to_db(data, image_path, binary_data)
 
+            self.status_var.set(f"Данные сохранены в БД (ID: {contact_id})")
+            messagebox.showinfo("Успех", f"Данные успешно сохранены в базу данных (ID: {contact_id})")
+
+            if error:  # Если было предупреждение, но не критическая ошибка
+                messagebox.showwarning("Предупреждение", error)
+        except Exception as e:
+            self.status_var.set(f"Ошибка при сохранении в БД: {str(e)}")
+            messagebox.showerror("Ошибка", f"Не удалось сохранить данные в БД: {str(e)}")
+            
+    def _save_contact_to_db(self, data, image_path, binary_data):
+        """Вспомогательный метод для сохранения контакта в БД"""
+        # Подключение к БД
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
+
+        try:
             # Создание курсора
             cur = conn.cursor()
 
@@ -611,35 +479,39 @@ class TextRecognizerApp:
             """
 
             # Выполнение запроса
-            cur.execute(insert_query, (name, phones, email, address, description, image_path, psycopg2.Binary(binary_data)))
+            cur.execute(insert_query, (name, phones, email, address, description, 
+                                      image_path, psycopg2.Binary(binary_data)))
 
             # Получение ID вставленной записи
             contact_id = cur.fetchone()[0]
 
             # Фиксация изменений
             conn.commit()
-
-            # Закрытие курсора и соединения
-            cur.close()
+            
+            return contact_id
+        finally:
+            # Закрытие курсора и соединения (выполняется всегда)
+            if 'cur' in locals():
+                cur.close()
             conn.close()
-
-            self.status_var.set(f"Данные сохранены в БД (ID: {contact_id})")
-            messagebox.showinfo("Успех", f"Данные успешно сохранены в базу данных (ID: {contact_id})")
-
-            if error:  # Если было предупреждение, но не критическая ошибка
-                messagebox.showwarning("Предупреждение", error)
-        except Exception as e:
-            self.status_var.set(f"Ошибка при сохранении в БД: {str(e)}")
-            messagebox.showerror("Ошибка", f"Не удалось сохранить данные в БД: {str(e)}")
 
 
     def handle_error(self, error_message):
         """Обработка ошибок распознавания"""
+        # Очищаем текстовое поле и выводим сообщение об ошибке
+        self.text_output.delete(1.0, tk.END)
         self.text_output.insert(tk.END, f"Ошибка при распознавании: {error_message}")
+        
+        # Останавливаем индикатор прогресса и разблокируем кнопки
         self.progress.stop()
         self.select_button.config(state=tk.NORMAL)
         self.recognize_button.config(state=tk.NORMAL)
+        
+        # Обновляем статус
         self.status_var.set("Произошла ошибка")
+        
+        # Логируем ошибку
+        print(f"Ошибка распознавания: {error_message}")
 
     def show_scan_frame(self):
         """Показать интерфейс сканирования и распознавания"""
@@ -733,15 +605,14 @@ class TextRecognizerApp:
         self.status_var.set("Режим редактирования визиток")
 
     def hide_all_frames(self):
-        """Скрыть все фреймы"""
-        if hasattr(self, 'content_frame'):
-            self.content_frame.pack_forget()
-        if hasattr(self, 'view_frame'):
-            self.view_frame.pack_forget()
-        if hasattr(self, 'edit_frame'):
-            self.edit_frame.pack_forget()
-        if hasattr(self, 'save_frame'):
-            self.save_frame.pack_forget()
+        """Скрыть все фреймы интерфейса"""
+        # Список всех возможных фреймов
+        frames = ['content_frame', 'view_frame', 'edit_frame', 'save_frame']
+        
+        # Скрываем каждый фрейм, если он существует
+        for frame_name in frames:
+            if hasattr(self, frame_name):
+                getattr(self, frame_name).pack_forget()
 
     def update_cards_list(self):
         """Обновить список визиток для просмотра"""
