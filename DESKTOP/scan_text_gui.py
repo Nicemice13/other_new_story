@@ -14,6 +14,8 @@ import fitz  # PyMuPDF для работы с PDF
 from langchain_gigachat import GigaChat
 import ssl
 import shutil
+import requests  # Для HTTP-запросов
+import pandas as pd  # Для работы с данными
 
 
 
@@ -94,7 +96,7 @@ def recognize_text_from_file(file_path):
 
     # Кодируем файл в base64
     file_base64 = base64.b64encode(file_content).decode('utf-8')
-    
+
     # Определяем MIME-тип (всегда image/jpeg, так как PDF уже конвертирован)
     mime_type = "image/jpeg"
 
@@ -146,7 +148,7 @@ class TextRecognizerApp:
         self.root = root
         self.root.title("Распознавание текста с изображений")
         self.root.geometry("800x600")
-        
+
         # Инициализация переменных для хранения данных
         self.image_path = None
         self.photo = None  # Для хранения ссылки на изображение
@@ -306,7 +308,7 @@ class TextRecognizerApp:
         # Очищаем и вставляем новый текст
         self.text_output.delete(1.0, tk.END)
         self.text_output.insert(tk.END, text)
-        
+
         # Останавливаем индикатор прогресса и разблокируем кнопки
         self.progress.stop()
         self.select_button.config(state=tk.NORMAL)
@@ -325,11 +327,11 @@ class TextRecognizerApp:
         self.save_frame.pack(pady=5)
 
         # Добавляем кнопки сохранения
-        save_json_button = tk.Button(self.save_frame, text="Сохранить в JSON", 
+        save_json_button = tk.Button(self.save_frame, text="Сохранить в JSON",
                                     command=lambda: self.save_to_json(text))
         save_json_button.pack(side=tk.LEFT, padx=5)
 
-        save_db_button = tk.Button(self.save_frame, text="Сохранить в БД", 
+        save_db_button = tk.Button(self.save_frame, text="Сохранить в БД",
                                   command=lambda: self.save_to_db(text))
         save_db_button.pack(side=tk.LEFT, padx=5)
 
@@ -376,12 +378,12 @@ class TextRecognizerApp:
             # Формируем имя файла из названия компании
             company_name = data["name"].strip() if data["name"] else "contact_data"
             filename = re.sub(r'[\\/*?:"<>|]', "_", company_name)  # Заменяем недопустимые символы
-            
+
             # Создаем директорию cards, если она не существует
             cards_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cards")
             if not os.path.exists(cards_dir):
                 os.makedirs(cards_dir)
-                
+
             # Полный путь к файлу
             file_path = os.path.join(cards_dir, f"{filename}.json")
 
@@ -439,7 +441,7 @@ class TextRecognizerApp:
         except Exception as e:
             self.status_var.set(f"Ошибка при сохранении в БД: {str(e)}")
             messagebox.showerror("Ошибка", f"Не удалось сохранить данные в БД: {str(e)}")
-            
+
     def _save_contact_to_db(self, data, image_path, binary_data):
         """Вспомогательный метод для сохранения контакта в БД"""
         # Подключение к БД
@@ -479,7 +481,7 @@ class TextRecognizerApp:
             """
 
             # Выполнение запроса
-            cur.execute(insert_query, (name, phones, email, address, description, 
+            cur.execute(insert_query, (name, phones, email, address, description,
                                       image_path, psycopg2.Binary(binary_data)))
 
             # Получение ID вставленной записи
@@ -487,7 +489,7 @@ class TextRecognizerApp:
 
             # Фиксация изменений
             conn.commit()
-            
+
             return contact_id
         finally:
             # Закрытие курсора и соединения (выполняется всегда)
@@ -501,15 +503,15 @@ class TextRecognizerApp:
         # Очищаем текстовое поле и выводим сообщение об ошибке
         self.text_output.delete(1.0, tk.END)
         self.text_output.insert(tk.END, f"Ошибка при распознавании: {error_message}")
-        
+
         # Останавливаем индикатор прогресса и разблокируем кнопки
         self.progress.stop()
         self.select_button.config(state=tk.NORMAL)
         self.recognize_button.config(state=tk.NORMAL)
-        
+
         # Обновляем статус
         self.status_var.set("Произошла ошибка")
-        
+
         # Логируем ошибку
         print(f"Ошибка распознавания: {error_message}")
 
@@ -608,7 +610,7 @@ class TextRecognizerApp:
         """Скрыть все фреймы интерфейса"""
         # Список всех возможных фреймов
         frames = ['content_frame', 'view_frame', 'edit_frame', 'save_frame']
-        
+
         # Скрываем каждый фрейм, если он существует
         for frame_name in frames:
             if hasattr(self, frame_name):
