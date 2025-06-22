@@ -11,7 +11,7 @@ import base64
 import tempfile  # Добавляем импорт tempfile
 from dotenv import load_dotenv, find_dotenv
 import fitz  # PyMuPDF для работы с PDF
-from langchain_gigachat import GigaChat
+from gigachat import GigaChat  # Обновленный импорт GigaChat
 import ssl
 import shutil
 import requests  # Для HTTP-запросов
@@ -33,12 +33,22 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
 def recognize_text_from_file(file_path):
     """Распознавание текста из файла изображения или PDF"""
-    model = GigaChat(
-        model="GigaChat-2-Max",
-        verify_ssl_certs=False,
-        auto_upload_images=True,
-        timeout=120
-    )
+    # Загружаем учетные данные из .env файла
+    load_dotenv(find_dotenv())
+    credentials = os.getenv("GIGACHAT_CREDENTIALS")
+    
+    # Инициализируем GigaChat с учетными данными
+    try:
+        model = GigaChat(
+            credentials=credentials,
+            model="GigaChat-Lite",
+            verify_ssl_certs=False,
+            scope="GIGACHAT_API_PERS"
+        )
+    except Exception as e:
+        print(f"Ошибка инициализации GigaChat: {str(e)}")
+        # Возвращаем заглушку, если не удалось инициализировать модель
+        return process_image_fallback(file_path)
 
     # Проверяем размер файла
     file_size = os.path.getsize(file_path) / (1024 * 1024)  # в МБ
@@ -103,13 +113,27 @@ def recognize_text_from_file(file_path):
     mime_type = "image/jpeg"
 
     # Формируем сообщение с изображением
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": '''
+    try:
+        # Кодируем файл в base64
+        with open(file_path, "rb") as file:
+            file_content = file.read()
+        file_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        # Определяем MIME-тип
+        mime_type = "image/jpeg"
+        if file_path.lower().endswith('.png'):
+            mime_type = "image/png"
+        elif file_path.lower().endswith('.pdf'):
+            mime_type = "application/pdf"
+            
+        # Формируем сообщение с изображением
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '''
 Распознай текст с этого изображения. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки.
 Если на визитке несколько адресов, сохрани их в виде массива. Для иностранных адресов сохрани их в оригинальном формате.
 {
@@ -120,49 +144,43 @@ def recognize_text_from_file(file_path):
   "description": ""
 }
 '''
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{file_base64}"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{file_base64}"
+                        }
                     }
-                }
-            ]
-        }
-    ]
+                ]
+            }
+        ]
+    except Exception as e:
+        print(f"Ошибка при подготовке изображения: {str(e)}")
+        return process_image_fallback(file_path)
 
     # Отправляем запрос с обработкой ошибок
     try:
-        response = model.invoke(messages)
-        return response.content
+        response = model.chat(messages)
+        
+        # Извлекаем текст из ответа
+        if hasattr(response, 'choices') and response.choices:
+            if hasattr(response.choices[0], 'message') and response.choices[0].message:
+                return response.choices[0].message.content
+        
+        # Если не удалось извлечь текст из ответа
+        print("Ошибка: Не удалось извлечь текст из ответа API")
+        return process_image_fallback(file_path)
     except TimeoutError:
         print("Ошибка: Превышено время ожидания ответа от сервера.")
-        # Используем резервную функцию
         return process_image_fallback(file_path)
     except ssl.SSLError as e:
         print(f"Ошибка SSL: {str(e)}")
-        if "handshake operation timed out" in str(e):
-            # Используем резервную функцию
-            return process_image_fallback(file_path)
-        return f"Ошибка SSL: {str(e)}"
+        return process_image_fallback(file_path)
     except Exception as e:
         error_str = str(e)
         print(f"Ошибка API: {error_str}")
         
-        if "402" in error_str and "Payment Required" in error_str:
-            error_message = "Ошибка: Требуется оплата API GigaChat. Используем локальное распознавание."
-            # Используем резервную функцию
-            return process_image_fallback(file_path)
-        elif "429" in error_str:
-            error_message = "Ошибка: Превышен лимит запросов к API GigaChat. Используем локальное распознавание."
-            # Используем резервную функцию
-            return process_image_fallback(file_path)
-        elif "401" in error_str or "403" in error_str:
-            error_message = "Ошибка: Проблема с авторизацией в API GigaChat. Используем локальное распознавание."
-            # Используем резервную функцию
-            return process_image_fallback(file_path)
-        
-        # Для других ошибок также используем резервную функцию
+        # Для всех ошибок используем резервную функцию
         return process_image_fallback(file_path)
 
 class TextRecognizerApp:
