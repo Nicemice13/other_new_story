@@ -16,6 +16,8 @@ import ssl
 import shutil
 import requests  # Для HTTP-запросов
 import pandas as pd  # Для работы с данными
+import unicodedata  # Для транслитерации
+from api_fallback import fallback_text_recognition, process_image_fallback  # Резервные функции
 
 
 
@@ -108,12 +110,13 @@ def recognize_text_from_file(file_path):
                 {
                     "type": "text",
                     "text": '''
-Распознай текст с этого изображения. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки
+Распознай текст с этого изображения. Найди в нем название комании(name), телефоны(phones), email, адреса и сохрани их в формат json строки.
+Если на визитке несколько адресов, сохрани их в виде массива. Для иностранных адресов сохрани их в оригинальном формате.
 {
   "name": "",
   "phones": [],
   "email": "",
-  "address": "",
+  "addresses": [],
   "description": ""
 }
 '''
@@ -133,13 +136,34 @@ def recognize_text_from_file(file_path):
         response = model.invoke(messages)
         return response.content
     except TimeoutError:
-        return "Ошибка: Превышено время ожидания ответа от сервера. Попробуйте позже."
+        print("Ошибка: Превышено время ожидания ответа от сервера.")
+        # Используем резервную функцию
+        return process_image_fallback(file_path)
     except ssl.SSLError as e:
+        print(f"Ошибка SSL: {str(e)}")
         if "handshake operation timed out" in str(e):
-            return "Ошибка: Превышено время ожидания SSL-соединения. Проверьте подключение к интернету."
+            # Используем резервную функцию
+            return process_image_fallback(file_path)
         return f"Ошибка SSL: {str(e)}"
     except Exception as e:
-        return f"Ошибка при обработке запроса: {str(e)}"
+        error_str = str(e)
+        print(f"Ошибка API: {error_str}")
+        
+        if "402" in error_str and "Payment Required" in error_str:
+            error_message = "Ошибка: Требуется оплата API GigaChat. Используем локальное распознавание."
+            # Используем резервную функцию
+            return process_image_fallback(file_path)
+        elif "429" in error_str:
+            error_message = "Ошибка: Превышен лимит запросов к API GigaChat. Используем локальное распознавание."
+            # Используем резервную функцию
+            return process_image_fallback(file_path)
+        elif "401" in error_str or "403" in error_str:
+            error_message = "Ошибка: Проблема с авторизацией в API GigaChat. Используем локальное распознавание."
+            # Используем резервную функцию
+            return process_image_fallback(file_path)
+        
+        # Для других ошибок также используем резервную функцию
+        return process_image_fallback(file_path)
 
 class TextRecognizerApp:
     """Приложение для распознавания текста с изображений и визиток"""
@@ -322,7 +346,7 @@ class TextRecognizerApp:
         if hasattr(self, 'save_frame'):
             self.save_frame.destroy()
 
-        # Создаем новый фрейм для кнопок сохранения
+        # Создаем новый фрейм для кнопок сохранения и фильтрации
         self.save_frame = tk.Frame(self.root)
         self.save_frame.pack(pady=5)
 
@@ -334,7 +358,77 @@ class TextRecognizerApp:
         save_db_button = tk.Button(self.save_frame, text="Сохранить в БД",
                                   command=lambda: self.save_to_db(text))
         save_db_button.pack(side=tk.LEFT, padx=5)
+        
+        # Добавляем выпадающий список стран и кнопку фильтрации
+        countries_frame = tk.Frame(self.save_frame)
+        countries_frame.pack(side=tk.LEFT, padx=15)
+        
+        tk.Label(countries_frame, text="Страна:").pack(side=tk.LEFT)
+        
+        # Список популярных стран
+        countries = ["Россия", "США", "Китай", "Германия", "Франция", "Великобритания", "Япония", "Индия", 
+                    "Италия", "Испания", "Нидерланды", "Бельгия", "Польша", "Швеция", "Австрия", 
+                    "Дания", "Финляндия", "Португалия", "Греция", "Чехия", "Венгрия", "Ирландия", 
+                    "Румыния", "Болгария", "Хорватия", "Словакия", "Словения", "Люксембург", 
+                    "Литва", "Латвия", "Эстония", "Кипр", "Мальта"]
+        self.country_var = tk.StringVar()
+        self.country_combobox = ttk.Combobox(countries_frame, textvariable=self.country_var, 
+                                            values=countries, width=15)
+        self.country_combobox.pack(side=tk.LEFT, padx=5)
+        
+        filter_button = tk.Button(countries_frame, text="Фильтровать",
+                                 command=self.filter_by_country)
+        filter_button.pack(side=tk.LEFT, padx=5)
 
+    def transliterate(self, text):
+        """Транслитерация текста с кириллицы на латиницу"""
+        # Словарь замен для более точной транслитерации
+        translit_dict = {
+            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+            'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+            'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+            'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
+            'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+            'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
+            'Ж': 'Zh', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+            'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+            'Ф': 'F', 'Х': 'Kh', 'Ц': 'Ts', 'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch',
+            'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
+        }
+        
+        result = ""
+        for char in text:
+            if char in translit_dict:
+                result += translit_dict[char]
+            else:
+                result += char
+                
+        return result
+    
+    def normalize_phone(self, phone):
+        """Нормализация телефонного номера"""
+        # Удаляем все нецифровые символы
+        digits_only = re.sub(r'\D', '', phone)
+        
+        # Если номер начинается с 8, заменяем на +7 (для России)
+        if digits_only.startswith('8') and len(digits_only) == 11:
+            digits_only = '7' + digits_only[1:]
+        
+        # Если номер не содержит код страны, добавляем +7 (для России)
+        if len(digits_only) == 10:
+            digits_only = '7' + digits_only
+            
+        # Добавляем + в начало, если его нет
+        if not phone.startswith('+'):
+            phone = '+' + digits_only
+        
+        # Форматируем номер: +7 (XXX) XXX-XX-XX
+        if len(digits_only) == 11 and digits_only.startswith('7'):
+            return f"+{digits_only[0]} ({digits_only[1:4]}) {digits_only[4:7]}-{digits_only[7:9]}-{digits_only[9:11]}"
+        
+        # Если не удалось отформатировать, возвращаем номер с +
+        return '+' + digits_only
+    
     def extract_data(self, text):
         """Извлечение данных из распознанного текста"""
         try:
@@ -348,6 +442,70 @@ class TextRecognizerApp:
                 # Проверяем наличие необходимых полей
                 if "name" not in data or not data["name"]:
                     return None, "Ошибка: не найдено название компании"
+                
+                # Нормализуем телефонные номера
+                if "phones" in data and isinstance(data["phones"], list):
+                    data["phones"] = [self.normalize_phone(phone) for phone in data["phones"]]
+                
+                # Обработка адресов
+                # Проверяем, есть ли поле addresses (множественные адреса)
+                if "addresses" in data and isinstance(data["addresses"], list):
+                    # Определяем страну по первому адресу
+                    countries = ["Россия", "США", "Китай", "Германия", "Франция", "Великобритания", "Япония", "Индия", 
+                                "Италия", "Испания", "Нидерланды", "Бельгия", "Польша", "Швеция", "Австрия", 
+                                "Дания", "Финляндия", "Португалия", "Греция", "Чехия", "Венгрия", "Ирландия", 
+                                "Румыния", "Болгария", "Хорватия", "Словакия", "Словения", "Люксембург", 
+                                "Литва", "Латвия", "Эстония", "Кипр", "Мальта"]
+                    
+                    # Проверяем каждый адрес на наличие страны
+                    for address in data["addresses"]:
+                        for country in countries:
+                            if country.lower() in address.lower():
+                                data["country"] = country
+                                break
+                        if "country" in data:
+                            break
+                    
+                    # Если страна не найдена, по умолчанию ставим Россию
+                    if "country" not in data:
+                        data["country"] = "Россия"
+                    
+                    # Для обратной совместимости добавляем поле address с первым адресом
+                    if data["addresses"]:
+                        data["address"] = data["addresses"][0]
+                    else:
+                        data["address"] = ""
+                
+                # Обработка одиночного адреса (для обратной совместимости)
+                elif "address" in data and data["address"]:
+                    # Преобразуем одиночный адрес в список адресов
+                    data["addresses"] = [data["address"]]
+                    
+                    # Определяем страну по адресу
+                    countries = ["Россия", "США", "Китай", "Германия", "Франция", "Великобритания", "Япония", "Индия", 
+                                "Италия", "Испания", "Нидерланды", "Бельгия", "Польша", "Швеция", "Австрия", 
+                                "Дания", "Финляндия", "Португалия", "Греция", "Чехия", "Венгрия", "Ирландия", 
+                                "Румыния", "Болгария", "Хорватия", "Словакия", "Словения", "Люксембург", 
+                                "Литва", "Латвия", "Эстония", "Кипр", "Мальта"]
+                    
+                    # Добавляем поле country, если найдена страна в адресе
+                    for country in countries:
+                        if country.lower() in data["address"].lower():
+                            data["country"] = country
+                            break
+                    
+                    # Если страна не найдена, по умолчанию ставим Россию
+                    if "country" not in data:
+                        data["country"] = "Россия"
+                else:
+                    # Если адреса нет вообще, создаем пустые поля
+                    data["address"] = ""
+                    data["addresses"] = []
+                    data["country"] = "Россия"
+                
+                # Добавляем транслитерацию для названия компании, если страна не Россия
+                if "name" in data and data["name"] and data.get("country") != "Россия":
+                    data["name_translit"] = self.transliterate(data["name"])
 
                 return data, None
             else:
@@ -357,7 +515,9 @@ class TextRecognizerApp:
                     "phones": [],
                     "email": "",
                     "address": "",
-                    "description": text  # Помещаем весь текст в описание
+                    "addresses": [],
+                    "description": text,  # Помещаем весь текст в описание
+                    "country": "Россия"   # По умолчанию Россия
                 }
                 return data, "Предупреждение: JSON не найден в тексте"
         except json.JSONDecodeError:
@@ -683,32 +843,69 @@ class TextRecognizerApp:
             # Создаем окно для просмотра
             view_window = tk.Toplevel(self.root)
             view_window.title(f"Просмотр визитки: {data.get('name', 'Без названия')}")
-            view_window.geometry("500x400")
+            view_window.geometry("600x500")
 
             # Отображаем данные
-            tk.Label(view_window, text="Название компании:", font=("Arial", 12, "bold")).grid(row=0, column=0, sticky="w", padx=10, pady=5)
-            tk.Label(view_window, text=data.get("name", ""), font=("Arial", 12)).grid(row=0, column=1, sticky="w", padx=10, pady=5)
+            row = 0
+            
+            # Название компании
+            tk.Label(view_window, text="Название компании:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+            tk.Label(view_window, text=data.get("name", ""), font=("Arial", 12)).grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
+            
+            # Транслитерация названия (если есть)
+            if "name_translit" in data and data["name_translit"]:
+                tk.Label(view_window, text="Название (транслит):", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+                tk.Label(view_window, text=data.get("name_translit", ""), font=("Arial", 12)).grid(row=row, column=1, sticky="w", padx=10, pady=5)
+                row += 1
+            
+            # Страна
+            if "country" in data:
+                tk.Label(view_window, text="Страна:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+                tk.Label(view_window, text=data.get("country", ""), font=("Arial", 12)).grid(row=row, column=1, sticky="w", padx=10, pady=5)
+                row += 1
 
-            tk.Label(view_window, text="Телефоны:", font=("Arial", 12, "bold")).grid(row=1, column=0, sticky="w", padx=10, pady=5)
+            # Телефоны
+            tk.Label(view_window, text="Телефоны:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", padx=10, pady=5)
             phones_text = ", ".join(data.get("phones", [])) if data.get("phones") else ""
-            tk.Label(view_window, text=phones_text, font=("Arial", 12)).grid(row=1, column=1, sticky="w", padx=10, pady=5)
+            tk.Label(view_window, text=phones_text, font=("Arial", 12)).grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
 
-            tk.Label(view_window, text="Email:", font=("Arial", 12, "bold")).grid(row=2, column=0, sticky="w", padx=10, pady=5)
-            tk.Label(view_window, text=data.get("email", ""), font=("Arial", 12)).grid(row=2, column=1, sticky="w", padx=10, pady=5)
+            # Email
+            tk.Label(view_window, text="Email:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+            tk.Label(view_window, text=data.get("email", ""), font=("Arial", 12)).grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
 
-            tk.Label(view_window, text="Адрес:", font=("Arial", 12, "bold")).grid(row=3, column=0, sticky="w", padx=10, pady=5)
-            tk.Label(view_window, text=data.get("address", ""), font=("Arial", 12)).grid(row=3, column=1, sticky="w", padx=10, pady=5)
+            # Адреса
+            if "addresses" in data and isinstance(data["addresses"], list) and data["addresses"]:
+                tk.Label(view_window, text="Адреса:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="nw", padx=10, pady=5)
+                
+                # Создаем фрейм для адресов
+                addresses_frame = tk.Frame(view_window)
+                addresses_frame.grid(row=row, column=1, sticky="w", padx=10, pady=5)
+                
+                # Добавляем каждый адрес
+                for i, address in enumerate(data["addresses"]):
+                    tk.Label(addresses_frame, text=f"{i+1}. {address}", font=("Arial", 12), wraplength=350, justify=tk.LEFT).pack(anchor="w", pady=2)
+                
+                row += 1
+            elif "address" in data and data["address"]:
+                tk.Label(view_window, text="Адрес:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+                tk.Label(view_window, text=data.get("address", ""), font=("Arial", 12), wraplength=350).grid(row=row, column=1, sticky="w", padx=10, pady=5)
+                row += 1
 
-            tk.Label(view_window, text="Описание:", font=("Arial", 12, "bold")).grid(row=4, column=0, sticky="nw", padx=10, pady=5)
+            # Описание
+            tk.Label(view_window, text="Описание:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="nw", padx=10, pady=5)
 
             # Текстовое поле для описания с прокруткой
             desc_text = scrolledtext.ScrolledText(view_window, wrap=tk.WORD, width=40, height=10)
-            desc_text.grid(row=4, column=1, sticky="w", padx=10, pady=5)
+            desc_text.grid(row=row, column=1, sticky="w", padx=10, pady=5)
             desc_text.insert(tk.END, data.get("description", ""))
             desc_text.config(state=tk.DISABLED)  # Только для чтения
+            row += 1
 
             # Кнопка закрытия
-            tk.Button(view_window, text="Закрыть", command=view_window.destroy).grid(row=5, column=0, columnspan=2, pady=10)
+            tk.Button(view_window, text="Закрыть", command=view_window.destroy).grid(row=row, column=0, columnspan=2, pady=10)
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось открыть файл: {str(e)}")
@@ -736,35 +933,102 @@ class TextRecognizerApp:
             # Создаем окно для редактирования
             edit_window = tk.Toplevel(self.root)
             edit_window.title(f"Редактирование визитки: {data.get('name', 'Без названия')}")
-            edit_window.geometry("500x450")
+            edit_window.geometry("600x600")
+
+            # Создаем фрейм с прокруткой для содержимого
+            main_frame = tk.Frame(edit_window)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            canvas = tk.Canvas(main_frame)
+            scrollbar = tk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = tk.Frame(canvas)
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
 
             # Создаем поля для редактирования
-            tk.Label(edit_window, text="Название компании:", font=("Arial", 12)).grid(row=0, column=0, sticky="w", padx=10, pady=5)
-            name_entry = tk.Entry(edit_window, width=40, font=("Arial", 12))
+            row = 0
+            
+            # Название компании
+            tk.Label(scrollable_frame, text="Название компании:", font=("Arial", 12)).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+            name_entry = tk.Entry(scrollable_frame, width=40, font=("Arial", 12))
             name_entry.insert(0, data.get("name", ""))
-            name_entry.grid(row=0, column=1, sticky="w", padx=10, pady=5)
+            name_entry.grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
+            
+            # Страна
+            tk.Label(scrollable_frame, text="Страна:", font=("Arial", 12)).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+            country_var = tk.StringVar(value=data.get("country", "Россия"))
+            countries = ["Россия", "США", "Китай", "Германия", "Франция", "Великобритания", "Япония", "Индия", 
+                        "Италия", "Испания", "Нидерланды", "Бельгия", "Польша", "Швеция", "Австрия", 
+                        "Дания", "Финляндия", "Португалия", "Греция", "Чехия", "Венгрия", "Ирландия", 
+                        "Румыния", "Болгария", "Хорватия", "Словакия", "Словения", "Люксембург", 
+                        "Литва", "Латвия", "Эстония", "Кипр", "Мальта"]
+            country_combobox = ttk.Combobox(scrollable_frame, textvariable=country_var, values=countries, width=38)
+            country_combobox.grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
 
-            tk.Label(edit_window, text="Телефоны (через запятую):", font=("Arial", 12)).grid(row=1, column=0, sticky="w", padx=10, pady=5)
-            phones_entry = tk.Entry(edit_window, width=40, font=("Arial", 12))
+            # Телефоны
+            tk.Label(scrollable_frame, text="Телефоны (через запятую):", font=("Arial", 12)).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+            phones_entry = tk.Entry(scrollable_frame, width=40, font=("Arial", 12))
             phones_entry.insert(0, ", ".join(data.get("phones", [])) if data.get("phones") else "")
-            phones_entry.grid(row=1, column=1, sticky="w", padx=10, pady=5)
+            phones_entry.grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
 
-            tk.Label(edit_window, text="Email:", font=("Arial", 12)).grid(row=2, column=0, sticky="w", padx=10, pady=5)
-            email_entry = tk.Entry(edit_window, width=40, font=("Arial", 12))
+            # Email
+            tk.Label(scrollable_frame, text="Email:", font=("Arial", 12)).grid(row=row, column=0, sticky="w", padx=10, pady=5)
+            email_entry = tk.Entry(scrollable_frame, width=40, font=("Arial", 12))
             email_entry.insert(0, data.get("email", ""))
-            email_entry.grid(row=2, column=1, sticky="w", padx=10, pady=5)
+            email_entry.grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            row += 1
 
-            tk.Label(edit_window, text="Адрес:", font=("Arial", 12)).grid(row=3, column=0, sticky="w", padx=10, pady=5)
-            address_entry = tk.Entry(edit_window, width=40, font=("Arial", 12))
-            address_entry.insert(0, data.get("address", ""))
-            address_entry.grid(row=3, column=1, sticky="w", padx=10, pady=5)
+            # Адреса (множественные)
+            tk.Label(scrollable_frame, text="Адреса:", font=("Arial", 12)).grid(row=row, column=0, sticky="nw", padx=10, pady=5)
+            
+            # Фрейм для адресов
+            addresses_frame = tk.Frame(scrollable_frame)
+            addresses_frame.grid(row=row, column=1, sticky="w", padx=10, pady=5)
+            
+            # Список для хранения полей ввода адресов
+            address_entries = []
+            
+            # Функция для добавления нового поля адреса
+            def add_address_field(address=""):
+                entry = tk.Entry(addresses_frame, width=40, font=("Arial", 12))
+                entry.insert(0, address)
+                entry.pack(pady=2, anchor="w")
+                address_entries.append(entry)
+            
+            # Добавляем поля для существующих адресов
+            if "addresses" in data and isinstance(data["addresses"], list) and data["addresses"]:
+                for address in data["addresses"]:
+                    add_address_field(address)
+            elif "address" in data and data["address"]:
+                add_address_field(data["address"])
+            else:
+                add_address_field()
+            
+            # Кнопка для добавления нового адреса
+            add_address_button = tk.Button(addresses_frame, text="+ Добавить адрес", 
+                                         command=lambda: add_address_field())
+            add_address_button.pack(pady=5, anchor="w")
+            
+            row += 1
 
-            tk.Label(edit_window, text="Описание:", font=("Arial", 12)).grid(row=4, column=0, sticky="nw", padx=10, pady=5)
-
-            # Текстовое поле для описания с прокруткой
-            desc_text = scrolledtext.ScrolledText(edit_window, wrap=tk.WORD, width=40, height=10)
-            desc_text.grid(row=4, column=1, sticky="w", padx=10, pady=5)
+            # Описание
+            tk.Label(scrollable_frame, text="Описание:", font=("Arial", 12)).grid(row=row, column=0, sticky="nw", padx=10, pady=5)
+            desc_text = scrolledtext.ScrolledText(scrollable_frame, wrap=tk.WORD, width=40, height=10)
+            desc_text.grid(row=row, column=1, sticky="w", padx=10, pady=5)
             desc_text.insert(tk.END, data.get("description", ""))
+            row += 1
 
             # Функция сохранения изменений
             def save_changes():
@@ -772,11 +1036,22 @@ class TextRecognizerApp:
                     # Получаем данные из полей
                     updated_data = {
                         "name": name_entry.get().strip(),
+                        "country": country_var.get(),
                         "phones": [phone.strip() for phone in phones_entry.get().split(",") if phone.strip()],
                         "email": email_entry.get().strip(),
-                        "address": address_entry.get().strip(),
+                        "addresses": [entry.get().strip() for entry in address_entries if entry.get().strip()],
                         "description": desc_text.get("1.0", tk.END).strip()
                     }
+                    
+                    # Добавляем поле address для обратной совместимости
+                    if updated_data["addresses"]:
+                        updated_data["address"] = updated_data["addresses"][0]
+                    else:
+                        updated_data["address"] = ""
+                    
+                    # Добавляем транслитерацию для иностранных компаний
+                    if updated_data["country"] != "Россия" and updated_data["name"]:
+                        updated_data["name_translit"] = self.transliterate(updated_data["name"])
 
                     # Сохраняем в файл
                     with open(file_path, 'w', encoding='utf-8') as f:
@@ -794,7 +1069,7 @@ class TextRecognizerApp:
 
             # Кнопки
             button_frame = tk.Frame(edit_window)
-            button_frame.grid(row=5, column=0, columnspan=2, pady=10)
+            button_frame.pack(pady=10)
 
             tk.Button(button_frame, text="Сохранить", command=save_changes).pack(side=tk.LEFT, padx=10)
             tk.Button(button_frame, text="Отмена", command=edit_window.destroy).pack(side=tk.LEFT, padx=10)
@@ -830,6 +1105,75 @@ class TextRecognizerApp:
 
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось удалить файл: {str(e)}")
+                
+    def filter_by_country(self):
+        """Фильтрация текста по выбранной стране"""
+        if not hasattr(self, 'country_var') or not self.country_var.get():
+            messagebox.showinfo("Информация", "Выберите страну для фильтрации")
+            return
+            
+        if not self.recognized_text:
+            messagebox.showinfo("Информация", "Сначала распознайте текст")
+            return
+            
+        country = self.country_var.get()
+        
+        try:
+            # Сохраняем оригинальный текст, если еще не сохранен
+            if not hasattr(self, 'original_text'):
+                self.original_text = self.recognized_text
+            
+            # Извлекаем данные из текста
+            data, _ = self.extract_data(self.original_text)
+            
+            if not data:
+                messagebox.showinfo("Информация", "Не удалось извлечь данные из текста")
+                return
+                
+            # Проверяем адрес на наличие выбранной страны
+            address = data.get("address", "")
+            
+            # Если страна найдена в адресе, выделяем её
+            if country.lower() in address.lower():
+                # Очищаем текстовое поле
+                self.text_output.delete(1.0, tk.END)
+                
+                # Вставляем текст с выделением страны
+                highlighted_address = address.replace(
+                    country, f"**{country}**"
+                ).replace(
+                    country.lower(), f"**{country.lower()}**"
+                ).replace(
+                    country.upper(), f"**{country.upper()}**"
+                )
+                
+                # Обновляем данные с выделенным адресом
+                data["address"] = highlighted_address
+                
+                # Преобразуем обратно в JSON
+                json_str = json.dumps(data, ensure_ascii=False, indent=2)
+                
+                # Вставляем в текстовое поле
+                self.text_output.insert(tk.END, json_str)
+                
+                # Добавляем информацию о стране
+                self.text_output.insert(tk.END, f"\n\nНайдена страна: {country}")
+                
+                # Обновляем статус
+                self.status_var.set(f"Найдена страна: {country}")
+            else:
+                # Если страна не найдена, восстанавливаем оригинальный текст
+                self.text_output.delete(1.0, tk.END)
+                self.text_output.insert(tk.END, self.original_text)
+                
+                # Добавляем информацию об отсутствии страны
+                self.text_output.insert(tk.END, f"\n\nСтрана {country} не найдена в адресе")
+                
+                # Обновляем статус
+                self.status_var.set(f"Страна {country} не найдена")
+                
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при фильтрации: {str(e)}")
 
 if __name__ == "__main__":
     root = tk.Tk()
