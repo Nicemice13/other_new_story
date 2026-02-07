@@ -28,9 +28,14 @@ cards/
 # Database
 *.db
 *.sqlite3
+contacts.db
 
 # Logs
 *.log
 
 # Temporary files
 *.tmp
+
+# Обработанные изображения
+screenshots/processed/
+OTHERS/Визитки

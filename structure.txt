@@ -1,0 +1,71 @@
+.
+├── DESKTOP
+│   ├── AI.py
+│   ├── api_fallback.py
+│   ├── app.py
+│   ├── busines_card_OOP.py
+│   ├── CRUD.py
+│   ├── database.py
+│   ├── db_edit_form.py
+│   ├── db_view_form.py
+│   ├── GUI.py
+│   ├── import_ocved.py
+│   ├── main_form.py
+│   ├── models.py
+│   ├── requirements.txt
+│   └── scan_text_gui.py
+├── docker-compose.yml
+├── LICENSE
+├── okved_temp.csv
+├── OTHERS
+│   ├── alter_table.sql
+│   ├── create_db.py
+│   ├── create_table.sql
+│   ├── req.txt
+│   ├── requirements.txt
+│   ├── scan_text.py
+│   ├── shutil
+│   ├── simple_test.py
+│   ├── test_api.py
+│   ├── test.py
+│   └── Визитки
+│       ├── photo_2025-05-31_17-44-09.jpg
+│       ├── photo_2025-05-31_17-44-15.jpg
+│       ├── photo_2025-05-31_17-44-19.jpg
+│       ├── photo_2025-05-31_17-44-24.jpg
+│       ├── photo_2025-05-31_17-44-28.jpg
+│       ├── photo_2025-05-31_17-44-32.jpg
+│       ├── photo_2025-06-08_18-02-29.png
+│       ├── photo_2025-06-08_18-03-12.jpg
+│       ├── photo_2025-06-08_18-03-16.jpg
+│       ├── photo_2025-06-08_18-03-25.jpg
+│       ├── photo_2025-06-08_18-03-37.jpg
+│       ├── photo_2025-06-08_18-03-37.pdf
+│       ├── photo_2025-06-08_18-03-40.pdf
+│       ├── Иностранные
+│       │   ├── Adele Altman_20250616_211138.jpg
+│       │   ├── photo_2025-05-31_17-43-39.jpg
+│       │   ├── photo_2025-06-08_18-03-08.png
+│       │   ├── photo_2025-06-08_18-03-21.jpg
+│       │   ├── photo_2025-06-08_18-03-29.jpg
+│       │   ├── photo_2025-06-08_18-03-33.jpg
+│       │   ├── photo_2025-06-08_18-03-33.pdf
+│       │   ├── photo_2025-06-22_14-05-11.jpg
+│       │   ├── photo_2025-06-22_14-05-25.jpg
+│       │   ├── photo_2025-06-22_14-05-32.jpg
+│       │   ├── photo_2025-06-22_14-05-41.jpg
+│       │   ├── photo_2025-06-22_14-05-49.jpg
+│       │   └── photo_2025-06-22_14-05-52.jpg
+│       └── Ристалище.рф_20250617_195312.jpg
+├── promts.md
+├── README.md
+├── requirements.txt
+├── structure.txt
+└── WEB
+    ├── main.py
+    └── templates
+        ├── error.html
+        ├── index.html
+        └── result.html
+
+7 directories, 62 files
